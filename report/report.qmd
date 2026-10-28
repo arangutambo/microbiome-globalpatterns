@@ -1,0 +1,173 @@
+---
+title: "Do microbial communities separate by habitat? A re-analysis of the Global Patterns 16S dataset"
+author: "Antoine Haddad"
+date: today
+format:
+  pdf:
+    documentclass: article
+    geometry: margin=2.2cm
+    fontsize: 10.5pt
+    number-sections: true
+    colorlinks: true
+    fig-pos: "H"
+execute:
+  echo: false
+  warning: false
+  message: false
+bibliography: references.bib
+csl: apa.csl
+---
+
+```{r setup}
+suppressPackageStartupMessages({
+  library(phyloseq); library(vegan); library(DESeq2); library(ggplot2); library(dplyr); library(knitr)
+})
+theme_set(theme_minimal(base_size = 10))
+cols <- c("host-associated" = "#97553B", "free-living" = "#59684B")
+
+data(GlobalPatterns)
+gp0 <- GlobalPatterns
+n_all <- nsamples(gp0)
+gp <- subset_samples(gp0, SampleType != "Mock")          # mock communities are controls, not habitats
+gp <- prune_taxa(taxa_sums(gp) > 0, gp)
+host <- c("Feces", "Skin", "Tongue")
+sample_data(gp)$habitat <- factor(ifelse(sample_data(gp)$SampleType %in% host, "host-associated", "free-living"),
+                                  levels = c("free-living", "host-associated"))
+n_s <- nsamples(gp); n_otu <- ntaxa(gp)
+depth <- sample_sums(gp); min_depth <- min(depth)
+types <- table(sample_data(gp)$SampleType)
+
+set.seed(1)
+rf <- rarefy_even_depth(gp, sample.size = min_depth, rngseed = 1, verbose = FALSE)
+md <- data.frame(sample_data(rf))
+
+alpha <- estimate_richness(rf, measures = c("Observed", "Shannon"))
+alpha$SampleType <- md$SampleType; alpha$habitat <- md$habitat
+kw <- kruskal.test(Shannon ~ SampleType, alpha)
+wx <- wilcox.test(Shannon ~ habitat, alpha, exact = FALSE)
+mean_by_hab <- aggregate(cbind(Observed, Shannon) ~ habitat, alpha, mean)
+
+bc <- phyloseq::distance(rf, "bray")
+wu <- UniFrac(rf, weighted = TRUE)
+set.seed(1)
+pm <- function(d, var) adonis2(as.formula(paste("d ~", var)), data = md, permutations = 999)
+pm_bc_h <- pm(bc, "habitat"); pm_bc_t <- pm(bc, "SampleType")
+pm_wu_h <- pm(wu, "habitat"); pm_wu_t <- pm(wu, "SampleType")
+bd <- anova(betadisper(bc, md$habitat))
+
+# sensitivity: no rarefying (Bray-Curtis on relative abundance)
+rel <- transform_sample_counts(gp, function(x) x / sum(x))
+bc_rel <- phyloseq::distance(rel, "bray")
+md_rel <- data.frame(sample_data(rel))
+set.seed(1); pm_rel <- adonis2(bc_rel ~ habitat, data = md_rel, permutations = 999)
+
+r2 <- function(a) round(a$R2[1], 2); pv <- function(a) a$`Pr(>F)`[1]
+```
+
+# Summary
+
+The Global Patterns dataset [@caporaso2011] sequenced the 16S rRNA gene from environmental and host-associated samples, and the original paper reported that communities split between host-associated and free-living habitats. Using `r n_s` non-control samples (`r format(n_otu, big.mark=",")` OTUs; three mock-community controls excluded), I test that split directly. Habitat (host-associated vs free-living) explains `r round(100*pm_bc_h$R2[1])`% of Bray-Curtis dissimilarity and `r round(100*pm_wu_h$R2[1])`% of weighted-UniFrac distance (PERMANOVA; *p* = `r pv(pm_bc_h)` for both, the smallest value 999 permutations can give), while the finer sample type explains `r round(100*pm_bc_t$R2[1])`% and `r round(100*pm_wu_t$R2[1])`%. The result is the same without rarefying (`r round(100*pm_rel$R2[1])`%, *p* = `r pv(pm_rel)`). At phylum level, DESeq2 [@love2014] finds Firmicutes, Tenericutes and Fusobacteria strongly enriched in host-associated samples. With 2 to 4 samples per sample type, the tests are underpowered for any single type, and the dispersion assumption behind PERMANOVA is borderline (see "Is the PERMANOVA result trustworthy?").
+
+# Question and data
+
+Do the microbial communities of different habitats group by habitat, and which taxa distinguish host-associated from free-living communities? The data are the `GlobalPatterns` object distributed with the Bioconductor package `phyloseq` [@mcmurdie2013]: an OTU table with `r format(nrow(otu_table(gp0)), big.mark=",")` OTUs and `r n_all` samples, a taxonomy table and a phylogenetic tree. Sample types and counts after removing the mock communities: `r paste(paste0(names(types), " (", types, ")"), collapse = ", ")`. Sequencing depth ranges from `r format(min_depth, big.mark=",")` to `r format(max(depth), big.mark=",")` reads per sample.
+
+# Methods
+
+**Rarefaction.** For alpha and beta diversity, samples were subsampled without replacement to the smallest library (`r format(min_depth, big.mark=",")` reads), which leaves `r format(ntaxa(rf), big.mark=",")` OTUs. Rarefying throws away data and is criticised for differential abundance testing [@mcmurdie2014], so I use it only for diversity, run a non-rarefied sensitivity check, and never for the DESeq2 analysis.
+
+**Alpha diversity.** Observed OTUs and Shannon index. Sample types compared with a Kruskal-Wallis test; habitats with a Wilcoxon rank-sum test.
+
+**Beta diversity.** Bray-Curtis dissimilarity and weighted UniFrac distance, ordinated by principal coordinates analysis (PCoA). Group differences tested by PERMANOVA (`vegan::adonis2`, 999 permutations) with habitat or sample type as the single predictor. Homogeneity of dispersion was checked with `betadisper`, because PERMANOVA can return a significant result from unequal spread alone.
+
+**Differential abundance.** Counts were aggregated to phylum, phyla with fewer than 1,000 total reads dropped, and DESeq2 fitted with `~ habitat` (free-living as reference) using `poscounts` size factors, which suit sparse count tables. Adjusted *p* < 0.05 (Benjamini-Hochberg).
+
+**Software.** R `r paste(R.version$major, R.version$minor, sep = ".")`, phyloseq `r as.character(packageVersion("phyloseq"))`, vegan `r as.character(packageVersion("vegan"))`, DESeq2 `r as.character(packageVersion("DESeq2"))`.
+
+# Results
+
+## Sequencing depth and alpha diversity
+
+```{r fig-alpha, fig.width=7.2, fig.height=3.4, fig.cap="(A) Reads per sample before rarefaction (dashed line = rarefaction depth, barely visible at this scale). (B) Shannon diversity after rarefaction, by sample type."}
+dd <- data.frame(sample = names(depth), depth = depth, type = sample_data(gp)$SampleType, habitat = sample_data(gp)$habitat)
+pA <- ggplot(dd, aes(reorder(sample, depth), depth / 1e6, fill = habitat)) + geom_col() +
+  geom_hline(yintercept = min_depth / 1e6, linetype = 2) + scale_fill_manual(values = cols) +
+  labs(x = NULL, y = "Million reads", tag = "A") + theme(axis.text.x = element_blank(), legend.position = "none")
+pB <- ggplot(alpha, aes(reorder(SampleType, Shannon, median), Shannon, colour = habitat)) +
+  geom_boxplot(outlier.shape = NA) + geom_jitter(width = 0.1, size = 1.4) + scale_colour_manual(values = cols) +
+  coord_flip() + labs(x = NULL, y = "Shannon index", tag = "B") + theme(legend.position = "bottom")
+gridExtra::grid.arrange(pA, pB, ncol = 2, widths = c(1, 1.3))
+```
+
+Library sizes vary about 40-fold, from `r format(min_depth, big.mark=",")` to `r format(max(depth), big.mark=",")` reads (Figure 1A), which is why diversity is compared at a common depth. Mean Shannon diversity is `r round(mean_by_hab$Shannon[mean_by_hab$habitat=="free-living"], 2)` for free-living and `r round(mean_by_hab$Shannon[mean_by_hab$habitat=="host-associated"], 2)` for host-associated samples (Wilcoxon *p* = `r signif(wx$p.value, 2)`, not significant at this sample size). Shannon diversity differs among the `r length(types)` sample types in a Kruskal-Wallis test (*p* = `r signif(kw$p.value, 2)`), but with 2 to 4 samples per type, pairwise comparisons would be unreliable and I do not report them.
+
+## Community composition
+
+```{r fig-pcoa, fig.width=7.2, fig.height=3.4, fig.cap="PCoA of (A) Bray-Curtis dissimilarity and (B) weighted UniFrac distance on rarefied data. Colour = habitat, shape = sample type."}
+ord <- function(d, tag) {
+  p <- cmdscale(d, k = 2, eig = TRUE); ve <- round(100 * p$eig[1:2] / sum(p$eig[p$eig > 0]), 1)
+  df <- data.frame(p$points, md[attr(d, "Labels"), c("SampleType", "habitat")])
+  ggplot(df, aes(X1, X2, colour = habitat, shape = SampleType)) + geom_point(size = 2.6) +
+    scale_colour_manual(values = cols) + scale_shape_manual(values = 1:9) +
+    labs(x = paste0("PCo1 (", ve[1], "%)"), y = paste0("PCo2 (", ve[2], "%)"), tag = tag)
+}
+a <- ord(bc, "A") + theme(legend.position = "none"); b <- ord(wu, "B")
+gridExtra::grid.arrange(a, b, ncol = 2, widths = c(1, 1.45))
+```
+
+```{r tab-perm}
+tab <- data.frame(
+  Distance = rep(c("Bray-Curtis", "Weighted UniFrac"), each = 2),
+  Predictor = rep(c("Habitat (2 groups)", "Sample type (8 groups)"), 2),
+  `R²` = c(pm_bc_h$R2[1], pm_bc_t$R2[1], pm_wu_h$R2[1], pm_wu_t$R2[1]),
+  `Pseudo-F` = c(pm_bc_h$F[1], pm_bc_t$F[1], pm_wu_h$F[1], pm_wu_t$F[1]),
+  p = c(pv(pm_bc_h), pv(pm_bc_t), pv(pm_wu_h), pv(pm_wu_t)), check.names = FALSE)
+tab$`R²` <- round(tab$`R²`, 3); tab$`Pseudo-F` <- round(tab$`Pseudo-F`, 2)
+kable(tab, row.names = FALSE, caption = "PERMANOVA (999 permutations). R² is the share of total dissimilarity explained by the predictor.")
+```
+
+Samples of the same type mostly sit together in both ordinations (Figure 2; one skin sample sits apart from the other two), and sample type explains most of the variation (Table 1). Habitat alone explains less, because the free-living group contains very different environments (soil, ocean, freshwater, sediment). Weighted UniFrac, which accounts for phylogenetic relatedness and abundance, gives a larger habitat effect than Bray-Curtis (`r round(100*pm_wu_h$R2[1])`% against `r round(100*pm_bc_h$R2[1])`%). That is consistent with differences in deeper lineages as well as in which OTUs are present, but I did not test that directly.
+
+## Is the PERMANOVA result trustworthy?
+
+PERMANOVA assumes similar within-group spread. Dispersion differs between habitats at *p* = `r signif(bd$"Pr(>F)"[1], 2)` (`betadisper`, Bray-Curtis), which is borderline: part of the Bray-Curtis habitat difference could reflect unequal spread rather than a shift in centroid. Two things limit the worry. The weighted-UniFrac result, which is less sensitive to rare OTUs, is stronger, and the non-rarefied relative-abundance version gives R² = `r round(pm_rel$R2[1], 3)` (*p* = `r pv(pm_rel)`). Neither removes the caveat; it is a reason to describe the effect as a difference in composition and dispersion together.
+
+## Which phyla distinguish host-associated communities?
+
+```{r da}
+ph <- tax_glom(gp, "Phylum", NArm = TRUE)
+ph <- prune_taxa(taxa_sums(ph) >= 1000, ph)
+dds <- suppressMessages(phyloseq_to_deseq2(ph, ~ habitat))
+dds <- DESeq(dds, sfType = "poscounts", quiet = TRUE)
+res <- as.data.frame(results(dds, alpha = 0.05, contrast = c("habitat", "host-associated", "free-living")))
+res$Phylum <- as.character(tax_table(ph)[rownames(res), "Phylum"])
+n_ph <- nrow(res); n_sig <- sum(res$padj < 0.05, na.rm = TRUE)
+n_up <- sum(res$padj < 0.05 & res$log2FoldChange > 0, na.rm = TRUE)
+```
+
+```{r fig-da, fig.width=6.4, fig.height=4.6, fig.cap="Phyla with adjusted p < 0.05: log2 fold change in host-associated relative to free-living samples (DESeq2, poscounts size factors)."}
+s <- res[!is.na(res$padj) & res$padj < 0.05, ]
+ggplot(s, aes(reorder(Phylum, log2FoldChange), log2FoldChange, fill = log2FoldChange > 0)) +
+  geom_col() + coord_flip() + scale_fill_manual(values = c("TRUE" = "#97553B", "FALSE" = "#59684B"), guide = "none") +
+  labs(x = NULL, y = "log2 fold change (host-associated vs free-living)")
+```
+
+Of `r n_ph` phyla tested, `r n_sig` differ at adjusted *p* < 0.05: `r n_up` are higher in host-associated samples and `r n_sig - n_up` higher in free-living samples (Figure 3). The strongest host-associated enrichments are Firmicutes, Tenericutes and Fusobacteria. The host-associated group is only gut, skin and tongue (9 samples). Log2 fold changes as large as the ones seen here (up to about 10) usually arise when a phylum is nearly absent in one group; I did not check that for each phylum, so I read the ranking as qualitative and the fold changes as imprecise.
+
+# Discussion and limitations
+
+**Replication is very small.** There are 2 to 4 samples per sample type and 9 versus 14 per habitat. Group-level tests are valid in principle but have little power, so non-significant results here are not evidence of no difference.
+
+**The groups are not independent replicates.** The habitats combine different environments, and samples from the same site type may share a source. The test treats each sample as independent evidence for "host-associated vs free-living", which overstates how much independent information the data contain.
+
+**Rarefaction.** Used only for diversity, with a non-rarefied check. Dropping to `r format(min_depth, big.mark=",")` reads per sample discards most of the data for deeply sequenced samples.
+
+**Phylum level.** Aggregating to phylum makes the count table well-behaved for DESeq2 but hides the OTU- and genus-level changes that usually matter in practice.
+
+**Scope.** This reproduces a qualitative finding of the original paper on a dataset already prepared in R; it does not involve the raw reads, OTU picking or taxonomy assignment.
+
+# Provenance and reproducibility
+
+The data are public and shipped with Bioconductor `phyloseq` (from @caporaso2011). The analysis code is this document (`report/report.qmd`). It was written and run with the assistance of Claude Code (Anthropic); I am responsible for checking and understanding every result before relying on it. No part derives from university coursework or assessed material.
+
+# References
