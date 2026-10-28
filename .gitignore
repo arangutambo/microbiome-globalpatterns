@@ -1,0 +1,5 @@
+.Rhistory
+.quarto/
+report/*_files/
+*.log
+.DS_Store
