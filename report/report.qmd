@@ -62,11 +62,14 @@ md_rel <- data.frame(sample_data(rel))
 set.seed(1); pm_rel <- adonis2(bc_rel ~ habitat, data = md_rel, permutations = 999)
 
 r2 <- function(a) round(a$R2[1], 2); pv <- function(a) a$`Pr(>F)`[1]
+cp <- jsonlite::fromJSON("../results/compositional.json", simplifyVector = FALSE)
+ait <- cp$aitchison$prev3
+pct <- function(x) round(100 * x)
 ```
 
 # Summary
 
-The Global Patterns dataset [@caporaso2011] sequenced the 16S rRNA gene from environmental and host-associated samples, and the original paper reported that communities split between host-associated and free-living habitats. Using `r n_s` non-control samples (`r format(n_otu, big.mark=",")` OTUs; three mock-community controls excluded), I test that split directly. Habitat (host-associated vs free-living) explains `r round(100*pm_bc_h$R2[1])`% of Bray-Curtis dissimilarity and `r round(100*pm_wu_h$R2[1])`% of weighted-UniFrac distance (PERMANOVA; *p* = `r pv(pm_bc_h)` for both, the smallest value 999 permutations can give), while the finer sample type explains `r round(100*pm_bc_t$R2[1])`% and `r round(100*pm_wu_t$R2[1])`%. The result is the same without rarefying (`r round(100*pm_rel$R2[1])`%, *p* = `r pv(pm_rel)`). At phylum level, DESeq2 [@love2014] finds Firmicutes, Tenericutes and Fusobacteria strongly enriched in host-associated samples. With 2 to 4 samples per sample type, the tests are underpowered for any single type, and the dispersion assumption behind PERMANOVA is borderline (see "Is the PERMANOVA result trustworthy?").
+The Global Patterns dataset [@caporaso2011] sequenced the 16S rRNA gene from environmental and host-associated samples, and the original paper reported that communities split between host-associated and free-living habitats. Using `r n_s` non-control samples (`r format(n_otu, big.mark=",")` OTUs; three mock-community controls excluded), I test that split directly. Habitat (host-associated vs free-living) explains `r round(100*pm_bc_h$R2[1])`% of Bray-Curtis dissimilarity and `r round(100*pm_wu_h$R2[1])`% of weighted-UniFrac distance (PERMANOVA; *p* = `r pv(pm_bc_h)` for both, the smallest value 999 permutations can give), while the finer sample type explains `r round(100*pm_bc_t$R2[1])`% and `r round(100*pm_wu_t$R2[1])`%. Bray-Curtis on unrarefied relative abundances gives the same answer (`r round(100*pm_rel$R2[1])`%, *p* = `r pv(pm_rel)`). At phylum level, DESeq2 [@love2014] finds Firmicutes, Tenericutes and Fusobacteria strongly enriched in host-associated samples. Because both of those choices are contested, I re-ran the analysis without them: the habitat split holds on an Aitchison distance with no rarefying at all (`r pct(ait$habitat_r2)`%, *p* = `r ait$habitat_p`), and the three phyla survive ANCOM-BC2 [@lin2020], but ANCOM-BC2 calls only `r cp$da_phylum$ancombc_sig` of `r cp$da_phylum$n_taxa` phyla where DESeq2 calls `r cp$da_phylum$deseq_sig`, so that count is a property of the method rather than of the data. With 2 to 4 samples per sample type, the tests are underpowered for any single type, and the dispersion assumption behind PERMANOVA is borderline (see "Is the PERMANOVA result trustworthy?").
 
 # Question and data
 
@@ -154,17 +157,74 @@ ggplot(s, aes(reorder(Phylum, log2FoldChange), log2FoldChange, fill = log2FoldCh
 
 Of `r n_ph` phyla tested, `r n_sig` differ at adjusted *p* < 0.05: `r n_up` are higher in host-associated samples and `r n_sig - n_up` higher in free-living samples (Figure 3). The strongest host-associated enrichments are Firmicutes, Tenericutes and Fusobacteria. The host-associated group is only gut, skin and tongue (9 samples). Log2 fold changes as large as the ones seen here (up to about 10) usually arise when a phylum is nearly absent in one group; I did not check that for each phylum, so I read the ranking as qualitative and the fold changes as imprecise.
 
+## Does the result survive without rarefying, and without DESeq2?
+
+Both of the choices above are contested. @mcmurdie2014 argue that rarefying discards
+usable data, and the compositional school [@gloor2017] argues that a count table carries
+only relative information, so a method that does not model each sample's sampling
+fraction will call too many taxa. Rather than defend the choices, I re-ran both questions
+the other way (`R/compositional.R`).
+
+**Beta diversity without rarefying.** A centred log-ratio (CLR) transform with Aitchison
+distance uses every read. On OTUs seen in at least `r ait$min_prevalence` samples
+(`r format(ait$n_otu, big.mark=",")` of `r format(cp$n_otu_total, big.mark=",")` OTUs,
+`r round(100*ait$read_share, 1)`% of reads), habitat explains
+`r pct(ait$habitat_r2)`% of Aitchison distance (*p* = `r ait$habitat_p`) and sample type
+`r pct(ait$sampletype_r2)`%. That sits between the rarefied Bray-Curtis estimate
+(`r pct(pm_bc_h$R2[1])`%) and weighted UniFrac (`r pct(pm_wu_h$R2[1])`%), and it is stable
+across the prevalence filter (`r paste(sapply(cp$aitchison, function(a) pct(a$habitat_r2)), collapse = "%, ")`%
+for OTUs in at least `r paste(sapply(cp$aitchison, function(a) a$min_prevalence), collapse = ", ")`
+samples). **The habitat split does not depend on rarefying.**
+
+It does, however, sharpen the dispersion caveat rather than settling it: `betadisper` on
+the Aitchison distance gives *p* = `r cp$aitchison_betadisper_p`, against
+`r signif(bd$"Pr(>F)"[1], 2)` on Bray-Curtis. Spread differs between habitats more clearly
+on this distance, not less.
+
+```{r tab-da-compare}
+dd <- list(cp$da_phylum, cp$da_genus)
+kable(data.frame(
+  Rank = sapply(dd, `[[`, "rank"),
+  `Taxa tested` = sapply(dd, `[[`, "n_taxa"),
+  `DESeq2` = sapply(dd, `[[`, "deseq_sig"),
+  `ANCOM-BC2` = sapply(dd, `[[`, "ancombc_sig"),
+  `Both` = sapply(dd, `[[`, "both"),
+  `DESeq2 only` = sapply(dd, `[[`, "deseq_only"),
+  `ANCOM-BC2 only` = sapply(dd, `[[`, "ancombc_only"),
+  `Effect-size r` = sapply(dd, `[[`, "lfc_correlation"), check.names = FALSE),
+  row.names = FALSE,
+  caption = "Taxa called differentially abundant between habitats at adjusted p < 0.05 by DESeq2 with poscounts size factors and by ANCOM-BC2, on the same unrarefied counts.")
+```
+
+**Differential abundance against a bias-corrected method.** ANCOM-BC2 [@lin2020] models the
+sampling fraction explicitly. On the same counts it calls far fewer taxa than DESeq2:
+`r cp$da_phylum$ancombc_sig` of `r cp$da_phylum$n_taxa` phyla against DESeq2's
+`r cp$da_phylum$deseq_sig`, and `r cp$da_genus$ancombc_sig` of `r cp$da_genus$n_taxa` genera
+against `r cp$da_genus$deseq_sig` (Table 2). The two methods nonetheless agree closely on
+*effect size* (Pearson *r* = `r cp$da_phylum$lfc_correlation` at phylum,
+`r cp$da_genus$lfc_correlation` at genus); they disagree on which effects clear a
+significance threshold. At phylum level every ANCOM-BC2 call is inside DESeq2's set; at
+genus level `r cp$da_genus$ancombc_only` genera are called by ANCOM-BC2 alone.
+
+The three phyla I named above survive both methods
+(`r paste(unlist(cp$da_phylum$both_host_enriched), collapse = ", ")`), so the headline
+reading of this dataset stands. The *count* does not: "`r n_sig` of `r n_ph` phyla differ"
+is a statement about DESeq2, not about the data. ANCOM-BC2 warns that its bias estimation
+wants more than 50 taxa, which the phylum table does not have, but the genus analysis has
+`r cp$da_genus$n_taxa` and shows the same pattern, so the gap is not an artefact of too few
+taxa.
+
 # Discussion and limitations
 
 **Replication is very small.** There are 2 to 4 samples per sample type and 9 versus 14 per habitat. Group-level tests are valid in principle but have little power, so non-significant results here are not evidence of no difference.
 
 **The groups are not independent replicates.** The habitats combine different environments, and samples from the same site type may share a source. The test treats each sample as independent evidence for "host-associated vs free-living", which overstates how much independent information the data contain.
 
-**Rarefaction.** Used only for diversity, with a non-rarefied check. Dropping to `r format(min_depth, big.mark=",")` reads per sample discards most of the data for deeply sequenced samples.
+**Rarefaction.** Used only for diversity, with a non-rarefied check. Dropping to `r format(min_depth, big.mark=",")` reads per sample discards most of the data for deeply sequenced samples. The Aitchison analysis avoids it entirely; it needs a pseudocount for the zeros instead, which is its own arbitrary choice, and I did not compare pseudocount strategies.
 
 **Phylum level.** Aggregating to phylum makes the count table well-behaved for DESeq2 but hides the OTU- and genus-level changes that usually matter in practice.
 
-**Scope.** This reproduces a qualitative finding of the original paper on a dataset already prepared in R; it does not involve the raw reads, OTU picking or taxonomy assignment.
+**Scope.** This reproduces a qualitative finding of the original paper on a dataset already prepared in R; it does not involve the raw reads, OTU picking or taxonomy assignment. What it adds to the original is the method comparison: the habitat result is shown to survive dropping rarefaction and switching to a bias-corrected differential-abundance test, while the number of taxa called is shown not to.
 
 # Provenance and reproducibility
 

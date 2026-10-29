@@ -1,0 +1,55 @@
+{
+  "aitchison": {
+    "prev2": {
+      "min_prevalence": 2,
+      "n_otu": 15058,
+      "read_share": 0.9993,
+      "habitat_r2": 0.134,
+      "habitat_p": 0.001,
+      "sampletype_r2": 0.768,
+      "sampletype_p": 0.001
+    },
+    "prev3": {
+      "min_prevalence": 3,
+      "n_otu": 12267,
+      "read_share": 0.9972,
+      "habitat_r2": 0.135,
+      "habitat_p": 0.001,
+      "sampletype_r2": 0.776,
+      "sampletype_p": 0.001
+    },
+    "prev5": {
+      "min_prevalence": 5,
+      "n_otu": 7743,
+      "read_share": 0.9857,
+      "habitat_r2": 0.138,
+      "habitat_p": 0.001,
+      "sampletype_r2": 0.787,
+      "sampletype_p": 0.001
+    }
+  },
+  "aitchison_betadisper_p": 0.0022,
+  "n_otu_total": 18773,
+  "da_phylum": {
+    "rank": "Phylum",
+    "n_taxa": 34,
+    "deseq_sig": 21,
+    "ancombc_sig": 5,
+    "both": 5,
+    "deseq_only": 16,
+    "ancombc_only": 0,
+    "lfc_correlation": 0.911,
+    "both_host_enriched": ["Firmicutes", "Tenericutes", "Fusobacteria"]
+  },
+  "da_genus": {
+    "rank": "Genus",
+    "n_taxa": 292,
+    "deseq_sig": 208,
+    "ancombc_sig": 75,
+    "both": 70,
+    "deseq_only": 138,
+    "ancombc_only": 5,
+    "lfc_correlation": 0.944,
+    "both_host_enriched": ["Dialister", "Akkermansia", "Lachnospira", "Eubacterium", "Eubacterium", "Finegoldia", "Acidaminococcus", "Eubacterium", "Peptostreptococcus", "Parabacteroides", "Faecalibacterium", "Ruminococcus", "Roseburia", "Lachnobacterium", "Blautia", "Lautropia", "Porphyromonas", "Leptotrichia", "Mogibacterium", "Cardiobacterium", "Aggregatibacter", "Peptoniphilus", "Clostridium", "Actinomyces", "Bilophila", "Selenomonas", "Capnocytophaga", "Clostridium", "Bulleidia", "Fusobacterium", "Staphylococcus", "Corynebacterium", "Gemella", "Oribacterium", "Tannerella", "Eubacterium", "Micrococcus", "Streptococcus", "Abiotrophia", "Granulicatella", "Varibaculum", "Veillonella", "Actinobacillus", "Campylobacter", "Lactobacillus", "Anaerovorax", "Haemophilus", "Enterococcus", "Neisseria", "Dermacoccus", "Kingella", "Rothia", "Atopobium", "Prevotella", "Hydrogenophilus", "Anaerococcus"]
+  }
+}
